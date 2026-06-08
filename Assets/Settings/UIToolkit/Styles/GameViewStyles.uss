@@ -1,0 +1,94 @@
+.touch-controls-container {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 340px;
+    padding-left: 32px;
+    padding-right: 32px;
+    padding-bottom: 32px;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-direction: row;
+    display: none;
+}
+
+.touch-control-cluster {
+    flex-grow: 1;
+    height: 100%;
+    justify-content: flex-end;
+}
+
+.touch-control-cluster-left {
+    align-items: flex-start;
+}
+
+.touch-control-cluster-right {
+    align-items: flex-end;
+}
+
+.touch-move-pad {
+    width: 220px;
+    height: 220px;
+    border-bottom-left-radius: 110px;
+    border-bottom-right-radius: 110px;
+    border-top-left-radius: 110px;
+    border-top-right-radius: 110px;
+    background-color: var(--theme-background-color-half);
+    border-left-width: 6px;
+    border-right-width: 6px;
+    border-top-width: 6px;
+    border-bottom-width: 6px;
+    border-left-color: var(--theme-font-color-half);
+    border-right-color: var(--theme-font-color-half);
+    border-top-color: var(--theme-font-color-half);
+    border-bottom-color: var(--theme-font-color-half);
+}
+
+.touch-move-knob {
+    position: absolute;
+    width: 92px;
+    height: 92px;
+    border-bottom-left-radius: 46px;
+    border-bottom-right-radius: 46px;
+    border-top-left-radius: 46px;
+    border-top-right-radius: 46px;
+    background-color: var(--theme-font-color-half);
+}
+
+.touch-jump-button {
+    width: 220px;
+    height: 220px;
+    border-bottom-left-radius: 110px;
+    border-bottom-right-radius: 110px;
+    border-top-left-radius: 110px;
+    border-top-right-radius: 110px;
+    background-color: var(--theme-background-color-half);
+    border-left-width: 6px;
+    border-right-width: 6px;
+    border-top-width: 6px;
+    border-bottom-width: 6px;
+    border-left-color: var(--theme-font-color-half);
+    border-right-color: var(--theme-font-color-half);
+    border-top-color: var(--theme-font-color-half);
+    border-bottom-color: var(--theme-font-color-half);
+    justify-content: center;
+    align-items: center;
+}
+
+.touch-jump-button--pressed {
+    background-color: var(--theme-font-color-half);
+}
+
+.touch-jump-button--pressed .touch-jump-label {
+    color: var(--theme-font-color-inverse);
+    -unity-text-outline-color: var(--theme-font-color);
+}
+
+.touch-jump-label {
+    color: var(--theme-font-color);
+    -unity-text-outline-color: var(--theme-font-color-inverse);
+    -unity-font-style: bold;
+    font-size: 36px;
+    letter-spacing: 2px;
+}

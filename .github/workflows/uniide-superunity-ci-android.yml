@@ -1,0 +1,265 @@
+name: Build Android
+
+on:
+  push:
+    branches:
+      - ci/build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Check UNITY_LICENSE secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "UNITY_LICENSE is missing in repository secrets."
+            echo "Please open GitHub settings in UniIDE and configure UNITY_LICENSE before running the build again."
+            exit 1
+          fi
+          echo "UNITY_LICENSE is configured."
+
+      - name: Restore Library Cache
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-Android-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-Android-
+            Library-
+
+      - name: Create Unity license validation script
+        run: |
+          mkdir -p Assets/Editor/UniIDE/Generated
+          cat > Assets/Editor/UniIDE/Generated/UnityLicenseValidation.cs <<'EOF'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using UnityEngine;
+          using UnityEditor;
+          using UnityEditor.Build.Reporting;
+
+          namespace UniIDE.Generated
+          {
+              public static class UnityLicenseValidation
+              {
+                  public static void ValidateLicense()
+                  {
+                      Debug.Log("UNITY_LICENSE validation succeeded.");
+                  }
+              }
+
+              public static class AndroidCiBuild
+              {
+                  public static void Validate()
+                  {
+                      ConfigureAndroidPlayerSettings();
+                  }
+
+                  public static void Build()
+                  {
+                      ConfigureAndroidPlayerSettings();
+                      EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Android, BuildTarget.Android);
+
+                      var scenes = EditorBuildSettings.scenes
+                          .Where(scene => scene.enabled)
+                          .Select(scene => scene.path)
+                          .Select(SanitizeScenePath)
+                          .Where(path => !string.IsNullOrWhiteSpace(path))
+                          .ToArray();
+                      if (scenes.Length == 0)
+                      {
+                          throw new InvalidOperationException("No enabled scenes found in ProjectSettings/EditorBuildSettings.asset.");
+                      }
+
+                      var outputPath = GetCommandLineValue("customBuildPath");
+                      if (string.IsNullOrWhiteSpace(outputPath))
+                      {
+                          var exportType = GetCommandLineValue("androidExportType");
+                          outputPath = exportType == "androidAppBundle"
+                              ? "build/Android/Android.aab"
+                              : "build/Android/Android.apk";
+                      }
+
+                      var outputDirectory = Path.GetDirectoryName(outputPath);
+                      if (!string.IsNullOrWhiteSpace(outputDirectory))
+                      {
+                          Directory.CreateDirectory(outputDirectory);
+                      }
+
+                      var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+                      {
+                          scenes = scenes,
+                          locationPathName = outputPath,
+                          targetGroup = BuildTargetGroup.Android,
+                          target = BuildTarget.Android,
+                          options = BuildOptions.None
+                      });
+
+                      if (report.summary.result != BuildResult.Succeeded)
+                      {
+                          throw new InvalidOperationException("Android build failed: " + report.summary.result);
+                      }
+
+                      Debug.Log("Android build succeeded: " + outputPath);
+                  }
+
+                  private static void ConfigureAndroidPlayerSettings()
+                  {
+                      Debug.Log("ProjectSettings AndroidTargetArchitectures asset line:");
+                      var assetArchitectures = AndroidArchitecture.None;
+                      var settingsPath = "ProjectSettings/ProjectSettings.asset";
+                      if (File.Exists(settingsPath))
+                      {
+                          foreach (var line in File.ReadAllLines(settingsPath))
+                          {
+                              if (line.TrimStart().StartsWith("AndroidTargetArchitectures:"))
+                              {
+                                  Debug.Log(line);
+                                  var rawValue = line.Substring(line.IndexOf(':') + 1).Trim();
+                                  if (int.TryParse(rawValue, out var numericValue))
+                                  {
+                                      assetArchitectures = (AndroidArchitecture)numericValue;
+                                  }
+                                  break;
+                              }
+                          }
+                      }
+
+                      var architectures = PlayerSettings.Android.targetArchitectures;
+                      Debug.Log("PlayerSettings.Android.targetArchitectures before fix: " + architectures);
+                      if (architectures == AndroidArchitecture.None)
+                      {
+                          architectures = assetArchitectures != AndroidArchitecture.None
+                              ? assetArchitectures
+                              : AndroidArchitecture.ARM64;
+                          Debug.Log("PlayerSettings.Android.targetArchitectures was None. Set to " + architectures + " for CI build.");
+                      }
+                      PlayerSettings.Android.targetArchitectures = architectures;
+                      if ((architectures & AndroidArchitecture.ARM64) == AndroidArchitecture.ARM64)
+                      {
+                          PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
+                          Debug.Log("Android scripting backend set to IL2CPP because ARM64 is selected.");
+                      }
+
+                      var buildVersion = GetCommandLineValue("buildVersion");
+                      if (!string.IsNullOrWhiteSpace(buildVersion))
+                      {
+                          PlayerSettings.bundleVersion = buildVersion;
+                      }
+
+                      var versionCode = GetCommandLineValue("androidVersionCode");
+                      if (int.TryParse(versionCode, out var parsedVersionCode))
+                      {
+                          PlayerSettings.Android.bundleVersionCode = parsedVersionCode;
+                      }
+
+                      var exportType = GetCommandLineValue("androidExportType");
+                      EditorUserBuildSettings.buildAppBundle = exportType == "androidAppBundle";
+
+                      var keystoreName = GetCommandLineValue("androidKeystoreName");
+                      if (!string.IsNullOrWhiteSpace(keystoreName))
+                      {
+                          PlayerSettings.Android.useCustomKeystore = true;
+                          PlayerSettings.Android.keystoreName = keystoreName;
+                          PlayerSettings.Android.keystorePass = GetCommandLineValue("androidKeystorePass");
+                          PlayerSettings.Android.keyaliasName = GetCommandLineValue("androidKeyaliasName");
+                          PlayerSettings.Android.keyaliasPass = GetCommandLineValue("androidKeyaliasPass");
+                      }
+
+                      AssetDatabase.SaveAssets();
+                      Debug.Log("PlayerSettings.Android.targetArchitectures final: " + PlayerSettings.Android.targetArchitectures);
+                  }
+
+                  private static string GetCommandLineValue(string name)
+                  {
+                      var args = Environment.GetCommandLineArgs();
+                      for (var i = 0; i < args.Length - 1; i++)
+                      {
+                          if (args[i] == "-" + name)
+                          {
+                              return args[i + 1];
+                          }
+                      }
+                      return Environment.GetEnvironmentVariable(ToEnvironmentName(name));
+                  }
+
+                  private static string SanitizeScenePath(string path)
+                  {
+                      if (string.IsNullOrWhiteSpace(path))
+                      {
+                          return string.Empty;
+                      }
+                      var trimmed = path.Trim();
+                      var unityPathEnd = trimmed.IndexOf(".unity", StringComparison.OrdinalIgnoreCase);
+                      if (unityPathEnd < 0)
+                      {
+                          return trimmed;
+                      }
+                      return trimmed.Substring(0, unityPathEnd + ".unity".Length).Trim();
+                  }
+
+                  private static string ToEnvironmentName(string name)
+                  {
+                      return string.Concat(name.Select((character, index) =>
+                          char.IsUpper(character) && index > 0
+                              ? "_" + character
+                              : character.ToString())).ToUpperInvariant();
+                  }
+              }
+          }
+          EOF
+
+      - name: Verify Unity license
+        uses: game-ci/unity-builder@v5.0.0
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: Android
+          unityVersion: 6000.2.5f1
+          buildMethod: UniIDE.Generated.UnityLicenseValidation.ValidateLicense
+          allowDirtyBuild: true
+
+      - name: Check Android Player Settings
+        uses: game-ci/unity-builder@v5.0.0
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: Android
+          unityVersion: 6000.2.5f1
+          buildMethod: UniIDE.Generated.AndroidCiBuild.Validate
+          allowDirtyBuild: true
+
+
+      - name: Build Android
+        uses: game-ci/unity-builder@v5.0.0
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: Android
+          unityVersion: 6000.2.5f1
+          buildMethod: UniIDE.Generated.AndroidCiBuild.Build
+          allowDirtyBuild: true
+
+          androidExportType: androidPackage
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-build
+          path: build/Android
+          retention-days: 7
